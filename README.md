@@ -90,6 +90,12 @@ Returns a list of dictionaries with:
 - `nomeAe` - Highway name
 - `Latitude` - GPS latitude
 - `Longitude` - GPS longitude
+- `imageUrl` - Direct URL to the camera's latest snapshot
+
+> **Note:** The Via Verde API paginates this endpoint (100 cameras per page)
+> and does not support paging through the rest, so `get_all_cameras()`
+> returns the first page only. This matches the Via Verde website itself,
+> which has the same limitation.
 
 ##### `get_camera_image(camera_id)`
 
@@ -140,7 +146,7 @@ if camera:
 
 ##### `get_camera_url(camera_id)`
 
-Get the direct URL for a camera image (requires session cookies).
+Get the direct, publicly-accessible URL for a camera image (no session or cookies required).
 
 ```python
 url = api.get_camera_url(camera_id=29)

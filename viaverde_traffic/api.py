@@ -5,7 +5,6 @@ This module provides a Python wrapper for accessing traffic camera images
 from the Via Verde website.
 """
 
-import base64
 import json
 import time
 from io import BytesIO
@@ -58,6 +57,7 @@ class ViaVerdeTrafficAPI:
 
     BASE_URL = "https://www.viaverde.pt/DesktopModules/Traffic/Handlers/Api.ashx"
     MAIN_PAGE = "https://www.viaverde.pt/ferramentas/informacao-de-transito"
+    IMAGE_BASE_URL = "https://s3.eu-west-1.amazonaws.com/brisa-vvservices-prod-images"
 
     def __init__(
         self,
@@ -120,6 +120,11 @@ class ViaVerdeTrafficAPI:
         """
         Get list of all available cameras.
 
+        Note: The Via Verde API paginates this endpoint (currently 100 cameras
+        per page) and ignores pagination query parameters, so only the first
+        page is returned. This matches the behavior of the Via Verde website
+        itself, which does not page through the remaining results either.
+
         Returns:
             List of camera dictionaries with keys:
                 - idCamara: Camera ID
@@ -128,6 +133,7 @@ class ViaVerdeTrafficAPI:
                 - nomeAe: Highway name
                 - Latitude: GPS latitude
                 - Longitude: GPS longitude
+                - imageUrl: Direct URL to the camera's latest snapshot
 
         Raises:
             ViaVerdeConnectionError: If connection to API fails
@@ -154,7 +160,7 @@ class ViaVerdeTrafficAPI:
                 timeout=self.timeout,
             )
             response.raise_for_status()
-            return response.json()
+            data = response.json()
         except requests.exceptions.ConnectionError as e:
             raise ViaVerdeConnectionError(
                 f"Failed to connect to Via Verde API: {e}"
@@ -164,19 +170,29 @@ class ViaVerdeTrafficAPI:
         except json.JSONDecodeError as e:
             raise ViaVerdeAPIError(f"Error parsing camera list JSON: {e}") from e
 
-    def get_camera_image(
-        self,
-        camera_id: int,
-        moduleid: int = 0,
-        tabid: int = 193,
-    ) -> bytes:
+        items = data.get("Items", []) if isinstance(data, dict) else data
+        return [self._normalize_camera(item) for item in items]
+
+    @staticmethod
+    def _normalize_camera(camera: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize a raw camera entry from the API into the public shape."""
+        coordinates = camera.get("coordinates") or {}
+        return {
+            "idCamara": camera.get("id"),
+            "nomeCamara": camera.get("name"),
+            "idAe": camera.get("roadId"),
+            "nomeAe": camera.get("roadName"),
+            "Latitude": coordinates.get("latitude"),
+            "Longitude": coordinates.get("longitude"),
+            "imageUrl": camera.get("imageUrl"),
+        }
+
+    def get_camera_image(self, camera_id: int) -> bytes:
         """
         Get camera image as bytes.
 
         Args:
             camera_id: The ID of the camera
-            moduleid: Module ID for the API (default: 0)
-            tabid: Tab ID for the API (default: 193)
 
         Returns:
             Image data as bytes
@@ -184,7 +200,7 @@ class ViaVerdeTrafficAPI:
         Raises:
             ViaVerdeConnectionError: If connection to API fails
             ViaVerdeAPIError: If API returns an error
-            ViaVerdeImageError: If image data cannot be decoded
+            ViaVerdeImageError: If the camera image cannot be found
 
         Example:
             >>> api = ViaVerdeTrafficAPI()
@@ -192,58 +208,17 @@ class ViaVerdeTrafficAPI:
             >>> with open("camera.jpg", "wb") as f:
             ...     f.write(image_bytes)
         """
-        self._ensure_initialized()
-
-        params = {
-            "lang": self.language,
-            "action": "cameraimage",
-            "ts": int(time.time() * 1000),
-        }
-
-        # These parameters are sent as headers
-        headers = {
-            "cameraid": str(camera_id),
-            "moduleid": str(moduleid),
-            "tabid": str(tabid),
-        }
-
         try:
             response = self.session.get(
-                self.BASE_URL,
-                params=params,
-                headers=headers,
+                self.get_camera_url(camera_id),
                 timeout=self.timeout,
             )
+            if response.status_code == 403:
+                raise ViaVerdeImageError(
+                    f"No image found for camera {camera_id}"
+                )
             response.raise_for_status()
-
-            # The API might return base64-encoded data or JSON
-            content_type = response.headers.get("Content-Type", "")
-
-            # Try to parse as JSON first (might contain base64 image)
-            if "text" in content_type or "json" in content_type:
-                try:
-                    # Check if it's JSON
-                    data = response.json()
-                    if isinstance(data, dict) and "image" in data:
-                        return base64.b64decode(data["image"])
-                    elif isinstance(data, dict) and "data" in data:
-                        return base64.b64decode(data["data"])
-                except (json.JSONDecodeError, ValueError):
-                    # Not JSON, might be raw base64 string
-                    try:
-                        return base64.b64decode(response.text)
-                    except Exception:
-                        return response.content
-
-            elif "image" in content_type:
-                return response.content
-            else:
-                # Unknown format, try base64 decode
-                try:
-                    return base64.b64decode(response.text)
-                except Exception:
-                    return response.content
-
+            return response.content
         except requests.exceptions.ConnectionError as e:
             raise ViaVerdeConnectionError(
                 f"Failed to connect to Via Verde API: {e}"
@@ -254,7 +229,6 @@ class ViaVerdeTrafficAPI:
     def get_camera_image_pil(
         self,
         camera_id: int,
-        **kwargs: Any,
     ) -> Optional["Image.Image"]:  # type: ignore
         """
         Get camera image as PIL Image object.
@@ -263,7 +237,6 @@ class ViaVerdeTrafficAPI:
 
         Args:
             camera_id: The ID of the camera
-            **kwargs: Additional parameters to pass to get_camera_image
 
         Returns:
             PIL Image object, or None if PIL is not available
@@ -285,7 +258,7 @@ class ViaVerdeTrafficAPI:
                 "Install it with: pip install Pillow"
             )
 
-        image_data = self.get_camera_image(camera_id, **kwargs)
+        image_data = self.get_camera_image(camera_id)
 
         try:
             return Image.open(BytesIO(image_data))
@@ -296,7 +269,6 @@ class ViaVerdeTrafficAPI:
         self,
         camera_id: int,
         filepath: str,
-        **kwargs: Any,
     ) -> bool:
         """
         Save camera image to file.
@@ -304,7 +276,6 @@ class ViaVerdeTrafficAPI:
         Args:
             camera_id: The ID of the camera
             filepath: Path where to save the image
-            **kwargs: Additional parameters to pass to get_camera_image
 
         Returns:
             True if saved successfully
@@ -319,7 +290,7 @@ class ViaVerdeTrafficAPI:
             >>> api.save_camera_image(camera_id=29, filepath="camera_29.jpg")
             True
         """
-        image_data = self.get_camera_image(camera_id, **kwargs)
+        image_data = self.get_camera_image(camera_id)
 
         try:
             with open(filepath, "wb") as f:
@@ -332,7 +303,8 @@ class ViaVerdeTrafficAPI:
         """
         Get the direct URL for a camera image.
 
-        Note: This URL requires cookies from an active session to work.
+        This URL is publicly accessible and does not require an active
+        session or cookies.
 
         Args:
             camera_id: The ID of the camera
@@ -344,14 +316,7 @@ class ViaVerdeTrafficAPI:
             >>> api = ViaVerdeTrafficAPI()
             >>> url = api.get_camera_url(camera_id=29)
         """
-        params = {
-            "lang": self.language,
-            "action": "cameraimage",
-            "ts": int(time.time() * 1000),
-        }
-
-        param_str = "&".join(f"{k}={v}" for k, v in params.items())
-        return f"{self.BASE_URL}?{param_str}"
+        return f"{self.IMAGE_BASE_URL}/CAM_{camera_id}.png"
 
     def find_cameras(
         self,

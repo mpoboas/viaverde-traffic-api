@@ -69,15 +69,36 @@ class TestViaVerdeTrafficAPI:
     @patch("viaverde_traffic.api.requests.Session")
     def test_get_all_cameras_success(self, mock_session_class):
         """Test successful camera list retrieval."""
-        mock_cameras = [
-            {"idCamara": 1, "nomeCamara": "Camera 1", "nomeAe": "A1"},
-            {"idCamara": 2, "nomeCamara": "Camera 2", "nomeAe": "A2"},
-        ]
+        mock_response_json = {
+            "Items": [
+                {
+                    "id": 1,
+                    "name": "Camera 1",
+                    "type": "CAMERA",
+                    "roadId": 1,
+                    "roadName": "A1",
+                    "coordinates": {"latitude": 38.1, "longitude": -9.1},
+                    "imageUrl": "https://s3.eu-west-1.amazonaws.com/brisa-vvservices-prod-images/CAM_1.png",
+                },
+                {
+                    "id": 2,
+                    "name": "Camera 2",
+                    "type": "CAMERA",
+                    "roadId": 2,
+                    "roadName": "A2",
+                    "coordinates": {"latitude": 38.2, "longitude": -9.2},
+                    "imageUrl": "https://s3.eu-west-1.amazonaws.com/brisa-vvservices-prod-images/CAM_2.png",
+                },
+            ],
+            "Page": 1,
+            "PageSize": 100,
+            "TotalCount": 2,
+        }
 
         mock_session = Mock()
         mock_response = Mock()
         mock_response.raise_for_status = Mock()
-        mock_response.json.return_value = mock_cameras
+        mock_response.json.return_value = mock_response_json
         mock_session.get.return_value = mock_response
         mock_session.headers = {}
         mock_session_class.return_value = mock_session
@@ -87,8 +108,16 @@ class TestViaVerdeTrafficAPI:
 
         cameras = api.get_all_cameras()
 
-        assert cameras == mock_cameras
         assert len(cameras) == 2
+        assert cameras[0] == {
+            "idCamara": 1,
+            "nomeCamara": "Camera 1",
+            "idAe": 1,
+            "nomeAe": "A1",
+            "Latitude": 38.1,
+            "Longitude": -9.1,
+            "imageUrl": "https://s3.eu-west-1.amazonaws.com/brisa-vvservices-prod-images/CAM_1.png",
+        }
 
     @patch("viaverde_traffic.api.requests.Session")
     def test_get_camera_image_success(self, mock_session_class):
@@ -97,43 +126,37 @@ class TestViaVerdeTrafficAPI:
 
         mock_session = Mock()
         mock_response = Mock()
+        mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
-        mock_response.headers = {"Content-Type": "image/jpeg"}
         mock_response.content = mock_image_data
         mock_session.get.return_value = mock_response
         mock_session.headers = {}
         mock_session_class.return_value = mock_session
 
         api = ViaVerdeTrafficAPI()
-        api._initialized = True
 
         image = api.get_camera_image(camera_id=29)
 
         assert image == mock_image_data
+        mock_session.get.assert_called_once_with(
+            "https://s3.eu-west-1.amazonaws.com/brisa-vvservices-prod-images/CAM_29.png",
+            timeout=api.timeout,
+        )
 
     @patch("viaverde_traffic.api.requests.Session")
-    def test_get_camera_image_base64_json(self, mock_session_class):
-        """Test camera image retrieval with base64 JSON response."""
-        import base64
-
-        mock_image_data = b"test image data"
-        mock_json_response = {"image": base64.b64encode(mock_image_data).decode()}
-
+    def test_get_camera_image_not_found(self, mock_session_class):
+        """Test camera image retrieval for a camera that does not exist."""
         mock_session = Mock()
         mock_response = Mock()
-        mock_response.raise_for_status = Mock()
-        mock_response.headers = {"Content-Type": "application/json"}
-        mock_response.json.return_value = mock_json_response
+        mock_response.status_code = 403
         mock_session.get.return_value = mock_response
         mock_session.headers = {}
         mock_session_class.return_value = mock_session
 
         api = ViaVerdeTrafficAPI()
-        api._initialized = True
 
-        image = api.get_camera_image(camera_id=29)
-
-        assert image == mock_image_data
+        with pytest.raises(ViaVerdeImageError):
+            api.get_camera_image(camera_id=999999)
 
     @patch("viaverde_traffic.api.requests.Session")
     def test_save_camera_image_success(self, mock_session_class, tmp_path):
@@ -142,15 +165,14 @@ class TestViaVerdeTrafficAPI:
 
         mock_session = Mock()
         mock_response = Mock()
+        mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
-        mock_response.headers = {"Content-Type": "image/jpeg"}
         mock_response.content = mock_image_data
         mock_session.get.return_value = mock_response
         mock_session.headers = {}
         mock_session_class.return_value = mock_session
 
         api = ViaVerdeTrafficAPI()
-        api._initialized = True
 
         filepath = tmp_path / "test_image.jpg"
         result = api.save_camera_image(camera_id=29, filepath=str(filepath))
@@ -205,8 +227,9 @@ class TestViaVerdeTrafficAPI:
         api = ViaVerdeTrafficAPI()
         url = api.get_camera_url(camera_id=29)
 
-        assert "cameraimage" in url
-        assert "lang=PT" in url
+        assert url == (
+            "https://s3.eu-west-1.amazonaws.com/brisa-vvservices-prod-images/CAM_29.png"
+        )
 
 
 class TestExceptions:
