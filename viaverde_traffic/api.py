@@ -246,7 +246,7 @@ class ViaVerdeTrafficAPI:
     def get_camera_image_pil(
         self,
         camera_id: int,
-    ) -> Optional["Image.Image"]:  # type: ignore
+    ) -> "Image.Image":  # type: ignore
         """
         Get camera image as PIL Image object.
 
@@ -256,7 +256,7 @@ class ViaVerdeTrafficAPI:
             camera_id: The ID of the camera
 
         Returns:
-            PIL Image object, or None if PIL is not available
+            PIL Image object
 
         Raises:
             ViaVerdeConnectionError: If connection to API fails
@@ -370,16 +370,22 @@ class ViaVerdeTrafficAPI:
 
         start = time.monotonic()
         while len(frames) < 4:
-            if time.monotonic() - start >= max_wait:
+            elapsed = time.monotonic() - start
+            if elapsed >= max_wait:
                 break
-            time.sleep(poll_interval)
+            time.sleep(max(0.0, min(poll_interval, max_wait - elapsed)))
             if time.monotonic() - start >= max_wait:
                 break
             try:
                 frame = self.get_camera_image_pil(camera_id)
-            except (ViaVerdeConnectionError, ViaVerdeAPIError):
+                frame_hash = self._compute_image_hash(frame)
+            except (
+                ViaVerdeConnectionError,
+                ViaVerdeAPIError,
+                ViaVerdeImageError,
+                OSError,
+            ):
                 continue
-            frame_hash = self._compute_image_hash(frame)
             if self._hamming_distance(frame_hash, last_hash) > hash_threshold:
                 frames.append(frame)
                 last_hash = frame_hash

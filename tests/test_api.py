@@ -340,6 +340,91 @@ class TestGetCameraGif:
         assert img.n_frames == 2
         assert mock_get_pil.call_count == 3
 
+    @patch("viaverde_traffic.api.time.sleep")
+    @patch("viaverde_traffic.api.time.monotonic")
+    @patch.object(ViaVerdeTrafficAPI, "get_camera_image_pil")
+    def test_transient_image_error_does_not_abort_loop(
+        self, mock_get_pil, mock_monotonic, mock_sleep
+    ):
+        ascending = self._gradient_image(reverse=False)
+        descending = self._gradient_image(reverse=True)
+        mock_get_pil.side_effect = [
+            ascending,
+            ViaVerdeImageError("camera briefly returned 403"),
+            descending,
+        ]
+        # start=0; iter1: check(10)<100, sleep, check(20)<100 -> fetch raises, continue
+        # iter2: check(30)<100, sleep, check(40)<100 -> fetch returns descending (distinct)
+        # iter3: check(100)>=100 -> break
+        mock_monotonic.side_effect = [0, 10, 20, 30, 40, 100]
+
+        api = ViaVerdeTrafficAPI()
+        gif_bytes = api.get_camera_gif(camera_id=29, max_wait=100, poll_interval=10)
+
+        from io import BytesIO
+
+        from PIL import Image
+
+        img = Image.open(BytesIO(gif_bytes))
+        assert img.n_frames == 2
+        assert mock_get_pil.call_count == 3
+
+    @patch("viaverde_traffic.api.time.sleep")
+    @patch("viaverde_traffic.api.time.monotonic")
+    @patch.object(ViaVerdeTrafficAPI, "get_camera_image_pil")
+    def test_corrupted_frame_decode_failure_does_not_abort_loop(
+        self, mock_get_pil, mock_monotonic, mock_sleep
+    ):
+        # Pillow's Image.open() is lazy: a truncated/corrupt payload only
+        # raises once pixel data is actually touched, which happens inside
+        # _compute_image_hash(). This must be tolerated like any other
+        # transient poll failure, not propagate and abort the whole call.
+        ascending = self._gradient_image(reverse=False)
+        descending = self._gradient_image(reverse=True)
+        corrupt = MagicMock()
+        corrupt.convert.side_effect = OSError("broken data stream")
+        mock_get_pil.side_effect = [ascending, corrupt, descending]
+        # start=0; iter1: check(10)<100, sleep, check(20)<100 -> fetch returns
+        # corrupt frame, hash computation raises OSError, continue
+        # iter2: check(30)<100, sleep, check(40)<100 -> fetch returns descending
+        # iter3: check(100)>=100 -> break
+        mock_monotonic.side_effect = [0, 10, 20, 30, 40, 100]
+
+        api = ViaVerdeTrafficAPI()
+        gif_bytes = api.get_camera_gif(camera_id=29, max_wait=100, poll_interval=10)
+
+        from io import BytesIO
+
+        from PIL import Image
+
+        img = Image.open(BytesIO(gif_bytes))
+        assert img.n_frames == 2
+        assert mock_get_pil.call_count == 3
+
+    @patch("viaverde_traffic.api.time.sleep")
+    @patch("viaverde_traffic.api.time.monotonic")
+    @patch.object(ViaVerdeTrafficAPI, "get_camera_image_pil")
+    def test_max_wait_smaller_than_poll_interval_does_not_oversleep(
+        self, mock_get_pil, mock_monotonic, mock_sleep
+    ):
+        # Regression test: max_wait smaller than poll_interval must not
+        # cause the loop to block for a full poll_interval; the sleep must
+        # be clamped to the remaining max_wait budget instead.
+        solid = self._solid_image(128)
+        mock_get_pil.side_effect = [solid]
+        # start=0; loop: elapsed=0<10 -> sleep(min(180, 10-0)=10);
+        # check elapsed=10-0=10 >= 10 -> break
+        mock_monotonic.side_effect = [0, 0, 10]
+
+        api = ViaVerdeTrafficAPI()
+        gif_bytes = api.get_camera_gif(camera_id=29, max_wait=10, poll_interval=180)
+
+        assert gif_bytes[:3] == b"GIF"
+        mock_sleep.assert_called_once()
+        slept_for = mock_sleep.call_args[0][0]
+        assert slept_for < 180
+        assert slept_for == pytest.approx(10)
+
     def test_raises_import_error_when_pil_unavailable(self):
         api = ViaVerdeTrafficAPI()
         with patch("viaverde_traffic.api.PIL_AVAILABLE", False):
