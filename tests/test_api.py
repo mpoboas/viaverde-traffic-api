@@ -57,7 +57,9 @@ class TestViaVerdeTrafficAPI:
         import requests
 
         mock_session = Mock()
-        mock_session.get.side_effect = requests.exceptions.ConnectionError("Network error")
+        mock_session.get.side_effect = requests.exceptions.ConnectionError(
+            "Network error"
+        )
         mock_session.headers = {}
         mock_session_class.return_value = mock_session
 
@@ -245,9 +247,7 @@ class TestPerceptualHash:
 
         width, height = 9, 8
         pixels = [
-            int(255 * x / (width - 1))
-            for _y in range(height)
-            for x in range(width)
+            int(255 * x / (width - 1)) for _y in range(height) for x in range(width)
         ]
         img = Image.new("L", (width, height))
         img.putdata(pixels)
@@ -275,9 +275,7 @@ class TestPerceptualHash:
 
         width, height = 9, 8
         pixels = [
-            int(255 * x / (width - 1))
-            for _y in range(height)
-            for x in range(width)
+            int(255 * x / (width - 1)) for _y in range(height) for x in range(width)
         ]
         # Row 3, column 4: make it dip below column 3's value.
         noisy_index = 3 * width + 4

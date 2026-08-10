@@ -190,9 +190,7 @@ class ViaVerdeTrafficAPI:
     @staticmethod
     def _compute_image_hash(image: "Image.Image", hash_size: int = 8) -> int:
         """Compute a difference hash (dHash) for perceptual comparison."""
-        resized = image.convert("L").resize(
-            (hash_size + 1, hash_size), Image.LANCZOS
-        )
+        resized = image.convert("L").resize((hash_size + 1, hash_size), Image.LANCZOS)
         pixels = list(resized.getdata())
         bits = 0
         for row in range(hash_size):
@@ -235,9 +233,7 @@ class ViaVerdeTrafficAPI:
                 timeout=self.timeout,
             )
             if response.status_code == 403:
-                raise ViaVerdeImageError(
-                    f"No image found for camera {camera_id}"
-                )
+                raise ViaVerdeImageError(f"No image found for camera {camera_id}")
             response.raise_for_status()
             return response.content
         except requests.exceptions.ConnectionError as e:
