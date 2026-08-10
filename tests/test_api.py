@@ -234,6 +234,147 @@ class TestViaVerdeTrafficAPI:
         )
 
 
+class TestGetCameraGif:
+    """Tests for get_camera_gif's polling/dedup/GIF-assembly behavior."""
+
+    @pytest.fixture(autouse=True)
+    def _require_pil(self):
+        pytest.importorskip("PIL")
+
+    @staticmethod
+    def _solid_image(value):
+        from PIL import Image
+
+        return Image.new("RGB", (9, 8), color=(value, value, value))
+
+    @staticmethod
+    def _gradient_image(reverse=False):
+        from PIL import Image
+
+        width, height = 9, 8
+        pixels = [
+            (
+                (255 - int(255 * x / (width - 1)))
+                if reverse
+                else int(255 * x / (width - 1))
+            )
+            for _y in range(height)
+            for x in range(width)
+        ]
+        img = Image.new("L", (width, height))
+        img.putdata(pixels)
+        return img.convert("RGB")
+
+    @patch("viaverde_traffic.api.time.sleep")
+    @patch("viaverde_traffic.api.time.monotonic")
+    @patch.object(ViaVerdeTrafficAPI, "get_camera_image_pil")
+    def test_collects_four_distinct_frames_then_stops(
+        self, mock_get_pil, mock_monotonic, mock_sleep
+    ):
+        ascending = self._gradient_image(reverse=False)
+        descending = self._gradient_image(reverse=True)
+        mock_get_pil.side_effect = [ascending, descending, ascending, descending]
+        mock_monotonic.side_effect = [0, 10, 20, 30, 40, 50, 60]
+
+        api = ViaVerdeTrafficAPI()
+        gif_bytes = api.get_camera_gif(camera_id=29, max_wait=2700, poll_interval=180)
+
+        assert gif_bytes[:3] == b"GIF"
+        from io import BytesIO
+
+        from PIL import Image
+
+        img = Image.open(BytesIO(gif_bytes))
+        assert img.n_frames == 4
+        assert mock_get_pil.call_count == 4
+
+    @patch("viaverde_traffic.api.time.sleep")
+    @patch("viaverde_traffic.api.time.monotonic")
+    @patch.object(ViaVerdeTrafficAPI, "get_camera_image_pil")
+    def test_returns_single_frame_when_camera_never_changes(
+        self, mock_get_pil, mock_monotonic, mock_sleep
+    ):
+        same_image = self._solid_image(128)
+        mock_get_pil.side_effect = [same_image, same_image]
+        # start=0; iter1: check(10)<100, sleep, check(20)<100 -> fetch (identical, dropped)
+        # iter2: check(30)<100, sleep, check(100)>=100 -> break
+        mock_monotonic.side_effect = [0, 10, 20, 30, 100]
+
+        api = ViaVerdeTrafficAPI()
+        gif_bytes = api.get_camera_gif(camera_id=29, max_wait=100, poll_interval=10)
+
+        from io import BytesIO
+
+        from PIL import Image
+
+        img = Image.open(BytesIO(gif_bytes))
+        assert getattr(img, "n_frames", 1) == 1
+        assert mock_get_pil.call_count == 2
+
+    @patch("viaverde_traffic.api.time.sleep")
+    @patch("viaverde_traffic.api.time.monotonic")
+    @patch.object(ViaVerdeTrafficAPI, "get_camera_image_pil")
+    def test_transient_poll_error_does_not_abort_loop(
+        self, mock_get_pil, mock_monotonic, mock_sleep
+    ):
+        ascending = self._gradient_image(reverse=False)
+        descending = self._gradient_image(reverse=True)
+        mock_get_pil.side_effect = [
+            ascending,
+            ViaVerdeConnectionError("network hiccup"),
+            descending,
+        ]
+        # start=0; iter1: check(10)<100, sleep, check(20)<100 -> fetch raises, continue
+        # iter2: check(30)<100, sleep, check(40)<100 -> fetch returns descending (distinct)
+        # iter3: check(100)>=100 -> break
+        mock_monotonic.side_effect = [0, 10, 20, 30, 40, 100]
+
+        api = ViaVerdeTrafficAPI()
+        gif_bytes = api.get_camera_gif(camera_id=29, max_wait=100, poll_interval=10)
+
+        from io import BytesIO
+
+        from PIL import Image
+
+        img = Image.open(BytesIO(gif_bytes))
+        assert img.n_frames == 2
+        assert mock_get_pil.call_count == 3
+
+    def test_raises_import_error_when_pil_unavailable(self):
+        api = ViaVerdeTrafficAPI()
+        with patch("viaverde_traffic.api.PIL_AVAILABLE", False):
+            with pytest.raises(ImportError):
+                api.get_camera_gif(camera_id=29)
+
+    @patch("viaverde_traffic.api.time.sleep")
+    @patch("viaverde_traffic.api.time.monotonic")
+    @patch.object(ViaVerdeTrafficAPI, "get_camera_image_pil")
+    def test_skips_repeated_frames_before_a_real_change(
+        self, mock_get_pil, mock_monotonic, mock_sleep
+    ):
+        ascending = self._gradient_image(reverse=False)
+        descending = self._gradient_image(reverse=True)
+        # Camera returns the same frame twice (no real change), then changes.
+        mock_get_pil.side_effect = [ascending, ascending, ascending, descending]
+        # start=0; 3 poll iterations each doing 2 monotonic checks (all <2700),
+        # then a final check (2700) breaks the loop even though only 2 of the
+        # possible 4 frames were ever collected.
+        mock_monotonic.side_effect = [0, 10, 20, 30, 40, 50, 60, 2700]
+
+        api = ViaVerdeTrafficAPI()
+        gif_bytes = api.get_camera_gif(camera_id=29, max_wait=2700, poll_interval=180)
+
+        from io import BytesIO
+
+        from PIL import Image
+
+        img = Image.open(BytesIO(gif_bytes))
+        # Only the initial frame and the one real change should be kept,
+        # even though get_camera_image_pil was polled 4 times total.
+        assert img.n_frames == 2
+        assert mock_get_pil.call_count == 4
+
+
 class TestPerceptualHash:
     """Tests for the dHash-based perceptual image comparison helpers."""
 

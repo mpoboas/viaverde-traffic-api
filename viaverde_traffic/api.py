@@ -316,6 +316,86 @@ class ViaVerdeTrafficAPI:
         except Exception as e:
             raise ViaVerdeImageError(f"Error saving image: {e}") from e
 
+    def get_camera_gif(
+        self,
+        camera_id: int,
+        max_wait: float = 2700,
+        poll_interval: float = 180,
+        hash_threshold: int = 5,
+    ) -> bytes:
+        """
+        Get an animated GIF of a camera's recent, visually distinct snapshots.
+
+        Since the Via Verde API only exposes each camera's latest snapshot
+        (no history), this polls the camera over real time, keeping a frame
+        each time it changes enough to exceed ``hash_threshold``. It blocks
+        until either 4 distinct frames are collected or ``max_wait`` seconds
+        elapse, whichever comes first. On timeout, it returns whatever
+        frames were collected, even if only 1.
+
+        Requires the Pillow library to be installed.
+
+        Args:
+            camera_id: The ID of the camera
+            max_wait: Maximum total seconds to wait for 4 distinct frames
+                (default: 2700, i.e. 45 minutes)
+            poll_interval: Seconds to sleep between polls (default: 180)
+            hash_threshold: Minimum perceptual hash distance between two
+                frames to consider them "different" (default: 5)
+
+        Returns:
+            GIF image data as bytes
+
+        Raises:
+            ViaVerdeConnectionError: If the first fetch's connection fails
+            ViaVerdeAPIError: If the first fetch's API call fails
+            ViaVerdeImageError: If the camera image cannot be found
+            ImportError: If Pillow is not installed
+
+        Example:
+            >>> api = ViaVerdeTrafficAPI()
+            >>> gif_bytes = api.get_camera_gif(camera_id=29)
+            >>> with open("camera_29.gif", "wb") as f:
+            ...     f.write(gif_bytes)
+        """
+        if not PIL_AVAILABLE:
+            raise ImportError(
+                "Pillow is required for get_camera_gif(). "
+                "Install it with: pip install Pillow"
+            )
+
+        first_frame = self.get_camera_image_pil(camera_id)
+        frames = [first_frame]
+        last_hash = self._compute_image_hash(first_frame)
+
+        start = time.monotonic()
+        while len(frames) < 4:
+            if time.monotonic() - start >= max_wait:
+                break
+            time.sleep(poll_interval)
+            if time.monotonic() - start >= max_wait:
+                break
+            try:
+                frame = self.get_camera_image_pil(camera_id)
+            except (ViaVerdeConnectionError, ViaVerdeAPIError):
+                continue
+            frame_hash = self._compute_image_hash(frame)
+            if self._hamming_distance(frame_hash, last_hash) > hash_threshold:
+                frames.append(frame)
+                last_hash = frame_hash
+
+        buffer = BytesIO()
+        rgb_frames = [f.convert("RGB") for f in frames]
+        rgb_frames[0].save(
+            buffer,
+            format="GIF",
+            save_all=True,
+            append_images=rgb_frames[1:],
+            duration=1000,
+            loop=0,
+        )
+        return buffer.getvalue()
+
     def get_camera_url(self, camera_id: int) -> str:
         """
         Get the direct URL for a camera image.
