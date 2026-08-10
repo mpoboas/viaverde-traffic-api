@@ -374,6 +374,39 @@ class TestGetCameraGif:
         assert img.n_frames == 2
         assert mock_get_pil.call_count == 4
 
+    @patch.object(ViaVerdeTrafficAPI, "get_camera_gif")
+    def test_save_camera_gif_writes_bytes_to_file(self, mock_get_gif, tmp_path):
+        mock_get_gif.return_value = b"GIF89a...fake gif bytes..."
+
+        api = ViaVerdeTrafficAPI()
+        filepath = tmp_path / "camera_29.gif"
+        result = api.save_camera_gif(camera_id=29, filepath=str(filepath))
+
+        assert result is True
+        assert filepath.exists()
+        assert filepath.read_bytes() == b"GIF89a...fake gif bytes..."
+        mock_get_gif.assert_called_once_with(
+            29, max_wait=2700, poll_interval=180, hash_threshold=5
+        )
+
+    @patch.object(ViaVerdeTrafficAPI, "get_camera_gif")
+    def test_save_camera_gif_forwards_custom_kwargs(self, mock_get_gif, tmp_path):
+        mock_get_gif.return_value = b"GIF89a..."
+
+        api = ViaVerdeTrafficAPI()
+        filepath = tmp_path / "camera_29.gif"
+        api.save_camera_gif(
+            camera_id=29,
+            filepath=str(filepath),
+            max_wait=60,
+            poll_interval=5,
+            hash_threshold=10,
+        )
+
+        mock_get_gif.assert_called_once_with(
+            29, max_wait=60, poll_interval=5, hash_threshold=10
+        )
+
 
 class TestPerceptualHash:
     """Tests for the dHash-based perceptual image comparison helpers."""

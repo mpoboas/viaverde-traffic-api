@@ -396,6 +396,56 @@ class ViaVerdeTrafficAPI:
         )
         return buffer.getvalue()
 
+    def save_camera_gif(
+        self,
+        camera_id: int,
+        filepath: str,
+        max_wait: float = 2700,
+        poll_interval: float = 180,
+        hash_threshold: int = 5,
+    ) -> bool:
+        """
+        Get an animated GIF of a camera's recent snapshots and save it to file.
+
+        See get_camera_gif() for details on how frames are collected.
+
+        Args:
+            camera_id: The ID of the camera
+            filepath: Path where to save the GIF
+            max_wait: Maximum total seconds to wait for 4 distinct frames
+                (default: 2700, i.e. 45 minutes)
+            poll_interval: Seconds to sleep between polls (default: 180)
+            hash_threshold: Minimum perceptual hash distance between two
+                frames to consider them "different" (default: 5)
+
+        Returns:
+            True if saved successfully
+
+        Raises:
+            ViaVerdeConnectionError: If the first fetch's connection fails
+            ViaVerdeAPIError: If the first fetch's API call fails
+            ViaVerdeImageError: If the camera image cannot be found or saved
+            ImportError: If Pillow is not installed
+
+        Example:
+            >>> api = ViaVerdeTrafficAPI()
+            >>> api.save_camera_gif(camera_id=29, filepath="camera_29.gif")
+            True
+        """
+        gif_data = self.get_camera_gif(
+            camera_id,
+            max_wait=max_wait,
+            poll_interval=poll_interval,
+            hash_threshold=hash_threshold,
+        )
+
+        try:
+            with open(filepath, "wb") as f:
+                f.write(gif_data)
+            return True
+        except Exception as e:
+            raise ViaVerdeImageError(f"Error saving GIF: {e}") from e
+
     def get_camera_url(self, camera_id: int) -> str:
         """
         Get the direct URL for a camera image.
