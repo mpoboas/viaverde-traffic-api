@@ -187,6 +187,27 @@ class ViaVerdeTrafficAPI:
             "imageUrl": camera.get("imageUrl"),
         }
 
+    @staticmethod
+    def _compute_image_hash(image: "Image.Image", hash_size: int = 8) -> int:
+        """Compute a difference hash (dHash) for perceptual comparison."""
+        resized = image.convert("L").resize(
+            (hash_size + 1, hash_size), Image.LANCZOS
+        )
+        pixels = list(resized.getdata())
+        bits = 0
+        for row in range(hash_size):
+            row_start = row * (hash_size + 1)
+            for col in range(hash_size):
+                bits <<= 1
+                if pixels[row_start + col] > pixels[row_start + col + 1]:
+                    bits |= 1
+        return bits
+
+    @staticmethod
+    def _hamming_distance(hash1: int, hash2: int) -> int:
+        """Count differing bits between two hashes."""
+        return bin(hash1 ^ hash2).count("1")
+
     def get_camera_image(self, camera_id: int) -> bytes:
         """
         Get camera image as bytes.

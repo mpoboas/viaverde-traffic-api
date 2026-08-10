@@ -232,6 +232,93 @@ class TestViaVerdeTrafficAPI:
         )
 
 
+class TestPerceptualHash:
+    """Tests for the dHash-based perceptual image comparison helpers."""
+
+    @pytest.fixture(autouse=True)
+    def _require_pil(self):
+        pytest.importorskip("PIL")
+
+    @staticmethod
+    def _ascending_gradient_image():
+        from PIL import Image
+
+        width, height = 9, 8
+        pixels = [
+            int(255 * x / (width - 1))
+            for _y in range(height)
+            for x in range(width)
+        ]
+        img = Image.new("L", (width, height))
+        img.putdata(pixels)
+        return img.convert("RGB")
+
+    @staticmethod
+    def _descending_gradient_image():
+        from PIL import Image
+
+        width, height = 9, 8
+        pixels = [
+            255 - int(255 * x / (width - 1))
+            for _y in range(height)
+            for x in range(width)
+        ]
+        img = Image.new("L", (width, height))
+        img.putdata(pixels)
+        return img.convert("RGB")
+
+    @staticmethod
+    def _ascending_gradient_with_single_pixel_noise():
+        """Same as the ascending gradient but with one interior pixel
+        nudged down slightly, flipping exactly one comparison bit."""
+        from PIL import Image
+
+        width, height = 9, 8
+        pixels = [
+            int(255 * x / (width - 1))
+            for _y in range(height)
+            for x in range(width)
+        ]
+        # Row 3, column 4: make it dip below column 3's value.
+        noisy_index = 3 * width + 4
+        pixels[noisy_index] = pixels[3 * width + 3] - 1
+        img = Image.new("L", (width, height))
+        img.putdata(pixels)
+        return img.convert("RGB")
+
+    def test_hash_is_identical_for_identical_images(self):
+        img = self._ascending_gradient_image()
+        h1 = ViaVerdeTrafficAPI._compute_image_hash(img)
+        h2 = ViaVerdeTrafficAPI._compute_image_hash(img)
+        assert h1 == h2
+
+    def test_hash_distance_is_large_for_clearly_different_images(self):
+        ascending = self._ascending_gradient_image()
+        descending = self._descending_gradient_image()
+
+        h1 = ViaVerdeTrafficAPI._compute_image_hash(ascending)
+        h2 = ViaVerdeTrafficAPI._compute_image_hash(descending)
+        distance = ViaVerdeTrafficAPI._hamming_distance(h1, h2)
+
+        assert distance > 5
+
+    def test_hash_distance_is_small_for_minor_noise(self):
+        clean = self._ascending_gradient_image()
+        noisy = self._ascending_gradient_with_single_pixel_noise()
+
+        h1 = ViaVerdeTrafficAPI._compute_image_hash(clean)
+        h2 = ViaVerdeTrafficAPI._compute_image_hash(noisy)
+        distance = ViaVerdeTrafficAPI._hamming_distance(h1, h2)
+
+        assert distance <= 5
+
+    def test_hamming_distance_of_identical_hashes_is_zero(self):
+        assert ViaVerdeTrafficAPI._hamming_distance(0b1010, 0b1010) == 0
+
+    def test_hamming_distance_counts_differing_bits(self):
+        assert ViaVerdeTrafficAPI._hamming_distance(0b1111, 0b0000) == 4
+
+
 class TestExceptions:
     """Tests for custom exceptions."""
 
