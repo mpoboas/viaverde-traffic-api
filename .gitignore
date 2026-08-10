@@ -151,3 +151,6 @@ camera_*.jpg
 # OS files
 .DS_Store
 Thumbs.db
+
+# Superpowers subagent-driven-development scratch workspace
+.superpowers/
