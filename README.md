@@ -53,6 +53,10 @@ image_bytes = api.get_camera_image(camera_id=29)
 # Get camera image as PIL Image (requires Pillow)
 img = api.get_camera_image_pil(camera_id=29)
 img.show()
+
+# Get an animated GIF of the camera's last few distinct snapshots
+# (blocks, polling every 3 min, for up to 45 min — requires Pillow)
+gif_bytes = api.get_camera_gif(camera_id=29)
 ```
 
 ## 📖 API Reference
@@ -123,6 +127,29 @@ Save camera image directly to a file.
 
 ```python
 api.save_camera_image(camera_id=29, filepath="camera_29.jpg")
+```
+
+##### `get_camera_gif(camera_id, max_wait=2700, poll_interval=180, hash_threshold=5)`
+
+Poll a camera and return an animated GIF of its last up-to-4 visually
+distinct snapshots. Since Via Verde only exposes each camera's latest
+image (no history), this blocks — polling every `poll_interval` seconds —
+until either 4 distinct frames are collected or `max_wait` seconds elapse,
+whichever comes first. On timeout it returns whatever frames it collected,
+even a single frame. Requires Pillow.
+
+```python
+gif_bytes = api.get_camera_gif(camera_id=29)
+with open("camera_29.gif", "wb") as f:
+    f.write(gif_bytes)
+```
+
+##### `save_camera_gif(camera_id, filepath, max_wait=2700, poll_interval=180, hash_threshold=5)`
+
+Same as `get_camera_gif()`, but saves the result directly to a file.
+
+```python
+api.save_camera_gif(camera_id=29, filepath="camera_29.gif")
 ```
 
 ##### `find_cameras(search)`
